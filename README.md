@@ -34,7 +34,7 @@ Real-time progress monitor for tar compress/decompress operations on Linux.
 
 ```bash
 # Download
-curl -O https://raw.githubusercontent.com/YOUR_USERNAME/tar_progress/main/tar_progress.sh
+curl -O https://raw.githubusercontent.com/buyudaren3/Real-time-progress-monitor-for-tar-compress-decompress-operations-on-Linux/main/tar_progress.sh
 
 # Make executable
 chmod +x tar_progress.sh
