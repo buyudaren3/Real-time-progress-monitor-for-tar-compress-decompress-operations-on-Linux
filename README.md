@@ -21,8 +21,10 @@ Real-time progress monitor for tar compress/decompress operations on Linux.
 | Format | Extension | Compress | Extract |
 |--------|-----------|----------|---------|
 | gzip | .tar.gz | `tar -zcvf` | `tar -xzf` |
+| pigz | .tar.gz | `tar -cf - dir \| pigz > file.tar.gz` | `pigz -dc file.tar.gz \| tar -xf -` |
 | xz | .tar.xz | `tar -Jcvf` | `tar -xJf` |
 | bzip2 | .tar.bz2 | `tar -jcvf` | `tar -xjf` |
+| pbzip2 | .tar.bz2 | `tar -cf - dir \| pbzip2 > file.tar.bz2` | `pbzip2 -dc file.tar.bz2 \| tar -xf -` |
 | zstd | .tar.zst | `tar --zstd -cvf` | `tar --zstd -xf` |
 
 ## Requirements
