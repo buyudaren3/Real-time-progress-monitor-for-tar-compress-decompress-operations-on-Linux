@@ -1,5 +1,6 @@
-# Real-time-progress-monitor-for-tar-compress-decompress-operations-on-Linux
 # tar_progress
+
+**[English](README.md)** | **[中文](README_CN.md)**
 
 Real-time progress monitor for tar compress/decompress operations on Linux.
 
