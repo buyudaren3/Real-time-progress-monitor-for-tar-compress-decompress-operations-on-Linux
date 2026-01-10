@@ -21,8 +21,10 @@ Linux 下 tar 压缩/解压操作的实时进度监控工具。
 | 格式 | 扩展名 | 压缩命令 | 解压命令 |
 |------|--------|----------|----------|
 | gzip | .tar.gz | `tar -zcvf` | `tar -xzf` |
+| pigz | .tar.gz | `tar -cf - dir \| pigz > file.tar.gz` | `pigz -dc file.tar.gz \| tar -xf -` |
 | xz | .tar.xz | `tar -Jcvf` | `tar -xJf` |
 | bzip2 | .tar.bz2 | `tar -jcvf` | `tar -xjf` |
+| pbzip2 | .tar.bz2 | `tar -cf - dir \| pbzip2 > file.tar.bz2` | `pbzip2 -dc file.tar.bz2 \| tar -xf -` |
 | zstd | .tar.zst | `tar --zstd -cvf` | `tar --zstd -xf` |
 
 ## 系统要求
