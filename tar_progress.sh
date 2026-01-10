@@ -8,8 +8,10 @@
 # 
 # Supported compression formats:
 #   - gzip  (.tar.gz)  : tar -zcvf / tar -xzf
+#   - pigz  (.tar.gz)  : tar -cf - dir | pigz > file.tar.gz (parallel gzip)
 #   - xz    (.tar.xz)  : tar -Jcvf / tar -xJf
 #   - bzip2 (.tar.bz2) : tar -jcvf / tar -xjf
+#   - pbzip2(.tar.bz2) : tar -cf - dir | pbzip2 > file.tar.bz2 (parallel bzip2)
 #   - zstd  (.tar.zst) : tar --zstd -cvf / tar --zstd -xf
 #
 # Requirements:
@@ -122,12 +124,12 @@ get_decompressed_size() {
         xz)
             xz -l "$filename" 2>/dev/null | tail -1 | awk '{print $5,$6}'
             ;;
-        gzip)
+        gzip|pigz)
             local size
             size=$(gzip -l "$filename" 2>/dev/null | tail -1 | awk '{print $2}')
             format_size "$size"
             ;;
-        bzip2)
+        bzip2|pbzip2)
             echo "N/A"  # bzip2 doesn't support listing
             ;;
         zstd)
@@ -354,10 +356,12 @@ DESCRIPTION:
     real-time progress with speed, ETA, and compression ratio.
 
 SUPPORTED FORMATS:
-    gzip  (.tar.gz)  : tar -zcvf / tar -xzf
-    xz    (.tar.xz)  : tar -Jcvf / tar -xJf  
-    bzip2 (.tar.bz2) : tar -jcvf / tar -xjf
-    zstd  (.tar.zst) : tar --zstd -cvf / tar --zstd -xf
+    gzip   (.tar.gz)  : tar -zcvf / tar -xzf
+    pigz   (.tar.gz)  : tar -cf - dir | pigz > file.tar.gz (parallel)
+    xz     (.tar.xz)  : tar -Jcvf / tar -xJf  
+    bzip2  (.tar.bz2) : tar -jcvf / tar -xjf
+    pbzip2 (.tar.bz2) : tar -cf - dir | pbzip2 > file.tar.bz2 (parallel)
+    zstd   (.tar.zst) : tar --zstd -cvf / tar --zstd -xf
 
 ENVIRONMENT VARIABLES:
     TAR_PROGRESS_INTERVAL   - Update interval in seconds (default: 0.1)
@@ -389,7 +393,7 @@ main() {
     
     # Find compression processes
     local pids=()
-    local procs=("gzip" "xz" "bzip2" "zstd")
+    local procs=("gzip" "pigz" "xz" "bzip2" "pbzip2" "zstd")
     
     for proc in "${procs[@]}"; do
         while IFS= read -r pid; do
@@ -398,12 +402,13 @@ main() {
     done
     
     if [[ ${#pids[@]} -eq 0 ]]; then
-        echo "No compression process detected (gzip/xz/bzip2/zstd)"
+        echo "No compression process detected (gzip/pigz/xz/bzip2/pbzip2/zstd)"
         echo ""
         echo "Usage:"
         echo "  1. Start tar command in one terminal:"
-        echo "     tar -zcvf archive.tar.gz folder/   (compress)"
-        echo "     tar -xzf archive.tar.gz            (extract)"
+        echo "     tar -zcvf archive.tar.gz folder/        (gzip)"
+        echo "     tar -cf - folder/ | pigz > archive.tar.gz  (pigz)"
+        echo "     tar -xzf archive.tar.gz                 (extract)"
         echo ""
         echo "  2. Run this script in another terminal"
         echo ""
