@@ -45,7 +45,7 @@ fi
 # Utility Functions
 # ============================================================================
 
-# Format file size to human readable
+# Format file size to human readable (decimal, 1000-based)
 format_size() {
     local size=${1:-0}
     # 处理空值或非数字
@@ -54,14 +54,14 @@ format_size() {
     fi
     awk -v size="$size" 'BEGIN {
         if (size < 0) size = 0
-        if (size < 1024) printf "%.2f B", size
-        else if (size < 1024*1024) printf "%.2f KiB", size/1024
-        else if (size < 1024*1024*1024) printf "%.2f MiB", size/1024/1024
-        else printf "%.2f GiB", size/1024/1024/1024
+        if (size < 1000) printf "%.2f B", size
+        else if (size < 1000*1000) printf "%.2f KB", size/1000
+        else if (size < 1000*1000*1000) printf "%.2f MB", size/1000/1000
+        else printf "%.2f GB", size/1000/1000/1000
     }'
 }
 
-# Format transfer rate
+# Format transfer rate (decimal, 1000-based)
 format_rate() {
     local rate=${1:-0}
     # 处理空值或非数字
@@ -70,10 +70,10 @@ format_rate() {
     fi
     awk -v rate="$rate" 'BEGIN {
         if (rate < 0) rate = 0
-        if (rate < 1024) printf "%.2f B/s", rate
-        else if (rate < 1024*1024) printf "%.2f KiB/s", rate/1024
-        else if (rate < 1024*1024*1024) printf "%.2f MiB/s", rate/1024/1024
-        else printf "%.2f GiB/s", rate/1024/1024/1024
+        if (rate < 1000) printf "%.2f B/s", rate
+        else if (rate < 1000*1000) printf "%.2f KB/s", rate/1000
+        else if (rate < 1000*1000*1000) printf "%.2f MB/s", rate/1000/1000
+        else printf "%.2f GB/s", rate/1000/1000/1000
     }'
 }
 
