@@ -20,7 +20,7 @@
 #   - Standard tools: awk, stat, pidof
 # ============================================================================
 
-set -euo pipefail
+set -uo pipefail
 
 export LANG="en_US.UTF-8"
 
@@ -47,8 +47,13 @@ fi
 
 # Format file size to human readable
 format_size() {
-    local size=$1
+    local size=${1:-0}
+    # 处理空值或非数字
+    if [[ -z "$size" ]] || ! [[ "$size" =~ ^[0-9]+$ ]]; then
+        size=0
+    fi
     awk -v size="$size" 'BEGIN {
+        if (size < 0) size = 0
         if (size < 1024) printf "%.2f B", size
         else if (size < 1024*1024) printf "%.2f KiB", size/1024
         else if (size < 1024*1024*1024) printf "%.2f MiB", size/1024/1024
@@ -58,8 +63,13 @@ format_size() {
 
 # Format transfer rate
 format_rate() {
-    local rate=$1
+    local rate=${1:-0}
+    # 处理空值或非数字
+    if [[ -z "$rate" ]] || ! [[ "$rate" =~ ^-?[0-9]+$ ]]; then
+        rate=0
+    fi
     awk -v rate="$rate" 'BEGIN {
+        if (rate < 0) rate = 0
         if (rate < 1024) printf "%.2f B/s", rate
         else if (rate < 1024*1024) printf "%.2f KiB/s", rate/1024
         else if (rate < 1024*1024*1024) printf "%.2f MiB/s", rate/1024/1024
@@ -69,7 +79,11 @@ format_rate() {
 
 # Format time duration
 format_time() {
-    local seconds=$1
+    local seconds=${1:-0}
+    # 处理空值或非数字
+    if [[ -z "$seconds" ]] || ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
+        seconds=0
+    fi
     if (( seconds < 60 )); then
         printf "%ds" "$seconds"
     elif (( seconds < 3600 )); then
@@ -93,14 +107,18 @@ get_process_name() {
 get_fd_target() {
     local pid=$1
     local fd=$2
-    ls -l "/proc/${pid}/fd/${fd}" 2>/dev/null | awk '{print $NF}'
+    local target
+    target=$(ls -l "/proc/${pid}/fd/${fd}" 2>/dev/null | awk '{print $NF}') || true
+    echo "${target:-}"
 }
 
 # Read IO stats from /proc
 get_io_stat() {
     local pid=$1
     local stat=$2
-    awk -v stat="$stat:" '{ if ($1==stat) print $2 }' "/proc/${pid}/io" 2>/dev/null || echo 0
+    local value
+    value=$(awk -v stat="$stat:" '{ if ($1==stat) print $2 }' "/proc/${pid}/io" 2>/dev/null) || true
+    echo "${value:-0}"
 }
 
 # Detect operation mode (compress/decompress)
@@ -174,11 +192,16 @@ monitor_decompress() {
     proname=$(get_process_name "$pid")
     filename=$(get_fd_target "$pid" 0)
     
-    if [[ ! -f "$filename" ]]; then
+    # 检查文件是否存在
+    if [[ -z "$filename" ]] || [[ ! -f "$filename" ]]; then
         return
     fi
     
-    total_size=$(stat -c '%s' "$filename" 2>/dev/null || echo 0)
+    total_size=$(stat -c '%s' "$filename" 2>/dev/null) || total_size=0
+    if [[ -z "$total_size" ]] || [[ "$total_size" -eq 0 ]]; then
+        return
+    fi
+    
     source_size_fmt=$(format_size "$total_size")
     dest_size=$(get_decompressed_size "$filename" "$proname")
     
@@ -199,15 +222,21 @@ monitor_decompress() {
         
         current_rchar=$(get_io_stat "$pid" "rchar")
         time_diff=$(($(date +%s) - start_time))
-        progress=$((current_rchar - old_rchar))
         
-        if [[ -z "$current_rchar" ]] || [[ "$current_rchar" -eq 0 ]]; then
-            break
+        # 检查数值有效性
+        if [[ -z "$current_rchar" ]] || ! [[ "$current_rchar" =~ ^[0-9]+$ ]]; then
+            sleep "$SLEEP_INTERVAL"
+            continue
         fi
         
-        # Ensure we don't exceed 100%
+        progress=$((current_rchar - old_rchar))
+        
+        # 确保不超过 100%
         if (( progress > total_size )); then
             progress=$total_size
+        fi
+        if (( progress < 0 )); then
+            progress=0
         fi
         
         percent=$((progress * 100 / total_size))
@@ -247,6 +276,12 @@ monitor_compress() {
     proname=$(get_process_name "$pid")
     output_file=$(get_fd_target "$pid" 1)
     
+    # 如果无法获取输出文件，尝试从 fd/3 或其他位置获取
+    if [[ -z "$output_file" ]] || [[ "$output_file" == *"pipe"* ]]; then
+        # pigz 可能将输出重定向到 stdout，尝试查找实际输出文件
+        output_file=$(ls -l /proc/${pid}/fd/ 2>/dev/null | grep -v "pipe" | grep -v "/dev/" | tail -1 | awk '{print $NF}') || true
+    fi
+    
     local old_wchar
     local old_rchar
     local start_time
@@ -257,11 +292,11 @@ monitor_compress() {
     old_wchar=$(get_io_stat "$pid" "wchar")
     old_rchar=$(get_io_stat "$pid" "rchar")
     start_time=$(date +%s)
-    last_wchar=$old_wchar
+    last_wchar=${old_wchar:-0}
     last_time=$start_time
     
-    printf "\033[%d;0H${COLOR_YELLOW}[Compress]${COLOR_RESET} %d: Starting... Output: %s                    " \
-        "$lineno" "$pid" "${output_file##*/}"
+    printf "\033[%d;0H${COLOR_YELLOW}[Compress]${COLOR_RESET} %d (%s): Starting...                    " \
+        "$lineno" "$pid" "$proname"
     
     while process_exists "$pid"; do
         local current_wchar
@@ -274,15 +309,18 @@ monitor_compress() {
         current_time=$(date +%s)
         time_diff=$((current_time - start_time))
         
-        if [[ -z "$current_wchar" ]]; then
-            break
+        if [[ -z "$current_wchar" ]] || [[ "$current_wchar" == "0" ]]; then
+            sleep "$SLEEP_INTERVAL"
+            continue
         fi
         
         # Calculate rate
         local interval_time=$((current_time - last_time))
         if (( interval_time > 0 )); then
             local interval_bytes=$((current_wchar - last_wchar))
-            current_rate=$(format_rate $((interval_bytes / interval_time)))
+            if (( interval_bytes > 0 )); then
+                current_rate=$(format_rate $((interval_bytes / interval_time)))
+            fi
         fi
         
         # Calculate compression ratio
@@ -294,18 +332,12 @@ monitor_compress() {
         fi
         
         local read_fmt
-        local output_fmt
+        local compressed_fmt
         read_fmt=$(format_size "$read_size")
+        compressed_fmt=$(format_size "$compressed_size")
         
-        # Get current output file size
-        local output_size=0
-        if [[ -f "$output_file" ]]; then
-            output_size=$(stat -c '%s' "$output_file" 2>/dev/null || echo 0)
-        fi
-        output_fmt=$(format_size "$output_size")
-        
-        printf "\033[%d;0H${COLOR_YELLOW}[Compress]${COLOR_RESET} %d: Read:%s Compressed:%s Ratio:%s %s [%s]    " \
-            "$lineno" "$pid" "$read_fmt" "$output_fmt" "$ratio" "$current_rate" "$(format_time $time_diff)"
+        printf "\033[%d;0H${COLOR_YELLOW}[Compress]${COLOR_RESET} %d (%s): Read:%s Written:%s Ratio:%s %s [%s]          " \
+            "$lineno" "$pid" "$proname" "$read_fmt" "$compressed_fmt" "$ratio" "$current_rate" "$(format_time $time_diff)"
         
         last_wchar=$current_wchar
         last_time=$current_time
@@ -313,16 +345,14 @@ monitor_compress() {
     done
     
     # Final stats
-    local final_size=0
-    if [[ -f "$output_file" ]]; then
-        final_size=$(stat -c '%s' "$output_file" 2>/dev/null || echo 0)
-    fi
+    local final_wchar
+    final_wchar=$((last_wchar - old_wchar))
     local final_fmt
-    final_fmt=$(format_size "$final_size")
+    final_fmt=$(format_size "$final_wchar")
     local total_time=$(($(date +%s) - start_time))
     
-    printf "\033[%d;0H${COLOR_GREEN}[Compress]${COLOR_RESET} %d: Done %-30s Size:%s [%s] (%s)                    \n" \
-        "$lineno" "$pid" "${output_file##*/}" "$final_fmt" "$(format_time $total_time)" "$proname"
+    printf "\033[%d;0H${COLOR_GREEN}[Compress]${COLOR_RESET} %d (%s): Done  Written:%s [%s]                              \n" \
+        "$lineno" "$pid" "$proname" "$final_fmt" "$(format_time $total_time)"
 }
 
 # Main monitor dispatcher
