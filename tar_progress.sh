@@ -122,15 +122,42 @@ get_io_stat() {
 }
 
 # Detect operation mode (compress/decompress)
+# 返回: compress, decompress, 或 decompress_arg (通过参数解压)
 detect_mode() {
     local pid=$1
     local fd0_link
+    local cmdline
+    
     fd0_link=$(get_fd_target "$pid" 0)
-    if [[ "$fd0_link" == *"pipe"* ]]; then
+    cmdline=$(cat "/proc/${pid}/cmdline" 2>/dev/null | tr '\0' ' ') || true
+    
+    # 检查命令行是否包含 -d (解压标志)
+    if [[ "$cmdline" == *" -d"* ]] || [[ "$cmdline" == *"-dc"* ]] || [[ "$cmdline" == *"-dk"* ]]; then
+        echo "decompress_arg"
+    elif [[ "$fd0_link" == *"pipe"* ]]; then
         echo "compress"
     else
         echo "decompress"
     fi
+}
+
+# 从命令行参数获取输入文件
+get_input_file_from_cmdline() {
+    local pid=$1
+    local cmdline
+    local filename=""
+    
+    cmdline=$(cat "/proc/${pid}/cmdline" 2>/dev/null | tr '\0' '\n') || true
+    
+    # 查找 .gz, .xz, .bz2, .zst 文件
+    while IFS= read -r arg; do
+        if [[ "$arg" =~ \.(gz|xz|bz2|zst)$ ]] && [[ -f "$arg" ]]; then
+            filename="$arg"
+            break
+        fi
+    done <<< "$cmdline"
+    
+    echo "$filename"
 }
 
 # Get decompressed size (if available)
@@ -138,20 +165,30 @@ get_decompressed_size() {
     local filename=$1
     local proname=$2
     
+    # 检查文件是否存在
+    if [[ -z "$filename" ]] || [[ ! -f "$filename" ]]; then
+        echo "N/A"
+        return
+    fi
+    
     case "$proname" in
         xz)
-            xz -l "$filename" 2>/dev/null | tail -1 | awk '{print $5,$6}'
+            xz -l "$filename" 2>/dev/null | tail -1 | awk '{print $5,$6}' || echo "N/A"
             ;;
         gzip|pigz)
             local size
-            size=$(gzip -l "$filename" 2>/dev/null | tail -1 | awk '{print $2}')
-            format_size "$size"
+            size=$(gzip -l "$filename" 2>/dev/null | tail -1 | awk '{print $2}') || true
+            if [[ -n "$size" ]] && [[ "$size" =~ ^[0-9]+$ ]]; then
+                format_size "$size"
+            else
+                echo "N/A"
+            fi
             ;;
         bzip2|pbzip2)
             echo "N/A"  # bzip2 doesn't support listing
             ;;
         zstd)
-            zstd -l "$filename" 2>/dev/null | tail -1 | awk '{print $4}'
+            zstd -l "$filename" 2>/dev/null | tail -1 | awk '{print $4}' || echo "N/A"
             ;;
         *)
             echo "N/A"
@@ -163,8 +200,15 @@ get_decompressed_size() {
 # Progress Bar
 # ============================================================================
 
+# draw_progress_bar - 绘制进度条
+# 参数: percent (0-100)
 draw_progress_bar() {
-    local percent=$1
+    local percent=${1:-0}
+    
+    # 确保 percent 在有效范围内
+    if (( percent < 0 )); then percent=0; fi
+    if (( percent > 100 )); then percent=100; fi
+    
     local filled=$((percent * BAR_WIDTH / 100))
     local empty=$((BAR_WIDTH - filled))
     local bar=""
@@ -191,6 +235,11 @@ monitor_decompress() {
     
     proname=$(get_process_name "$pid")
     filename=$(get_fd_target "$pid" 0)
+    
+    # 如果 fd/0 不是文件，尝试从命令行参数获取
+    if [[ -z "$filename" ]] || [[ ! -f "$filename" ]]; then
+        filename=$(get_input_file_from_cmdline "$pid")
+    fi
     
     # 检查文件是否存在
     if [[ -z "$filename" ]] || [[ ! -f "$filename" ]]; then
@@ -366,6 +415,7 @@ monitor_process() {
     if [[ "$mode" == "compress" ]]; then
         monitor_compress "$pid" "$lineno"
     else
+        # decompress 或 decompress_arg 都走解压监控
         monitor_decompress "$pid" "$lineno"
     fi
 }
@@ -388,9 +438,11 @@ DESCRIPTION:
 SUPPORTED FORMATS:
     gzip   (.tar.gz)  : tar -zcvf / tar -xzf
     pigz   (.tar.gz)  : tar -cf - dir | pigz > file.tar.gz (parallel)
+                        pigz -dc file.tar.gz | tar -xf -   (parallel extract)
     xz     (.tar.xz)  : tar -Jcvf / tar -xJf  
     bzip2  (.tar.bz2) : tar -jcvf / tar -xjf
     pbzip2 (.tar.bz2) : tar -cf - dir | pbzip2 > file.tar.bz2 (parallel)
+                        pbzip2 -dc file.tar.bz2 | tar -xf -   (parallel extract)
     zstd   (.tar.zst) : tar --zstd -cvf / tar --zstd -xf
 
 ENVIRONMENT VARIABLES:
