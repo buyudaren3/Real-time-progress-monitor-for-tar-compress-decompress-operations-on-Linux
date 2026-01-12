@@ -66,12 +66,12 @@ tar -xzf backup.tar.gz
 
 **Decompression:**
 ```
-[Extract] 12345: |████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░| 42% 125.30 MiB/s ETA:2m15s
+[Extract] 12345: |████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░| 42% 125.30 MB/s ETA:2m15s [1m30s]
 ```
 
 **Compression:**
 ```
-[Compress] 12346: Read:1.50 GiB Compressed:320.00 MiB Ratio:4.8:1 45.20 MiB/s [32s]
+[Compress] 12346 (gzip): Read:1.50 GB Written:320.00 MB Ratio:4.7:1 R:45.20 MB/s W:9.70 MB/s [32s]
 ```
 
 ## Configuration
