@@ -103,6 +103,34 @@ get_process_name() {
     cat "/proc/$1/comm" 2>/dev/null || echo "unknown"
 }
 
+# Get process start time (seconds since epoch)
+get_process_start_time() {
+    local pid=$1
+    local starttime_ticks
+    local boot_time
+    local clk_tck
+    
+    # 获取进程启动时间（以系统启动后的 ticks 为单位）
+    starttime_ticks=$(awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null) || true
+    if [[ -z "$starttime_ticks" ]]; then
+        echo "0"
+        return
+    fi
+    
+    # 获取系统启动时间
+    boot_time=$(awk '/btime/ {print $2}' /proc/stat 2>/dev/null) || true
+    if [[ -z "$boot_time" ]]; then
+        echo "0"
+        return
+    fi
+    
+    # 获取时钟频率 (通常是 100)
+    clk_tck=$(getconf CLK_TCK 2>/dev/null) || clk_tck=100
+    
+    # 计算进程启动的 Unix 时间戳
+    echo $((boot_time + starttime_ticks / clk_tck))
+}
+
 # Get file descriptor target
 get_fd_target() {
     local pid=$1
@@ -254,23 +282,27 @@ monitor_decompress() {
     source_size_fmt=$(format_size "$total_size")
     dest_size=$(get_decompressed_size "$filename" "$proname")
     
-    local old_rchar
-    local start_time
+    # 获取进程实际启动时间
+    local process_start_time
+    process_start_time=$(get_process_start_time "$pid")
+    if [[ "$process_start_time" -eq 0 ]]; then
+        process_start_time=$(date +%s)
+    fi
+    
     local current_rate="0 B/s"
     local rest_time="calculating..."
     
-    old_rchar=$(get_io_stat "$pid" "rchar")
-    start_time=$(date +%s)
-    
     while process_exists "$pid"; do
         local current_rchar
-        local time_diff
+        local current_time
+        local elapsed_time
         local progress
         local percent
         local bar
         
         current_rchar=$(get_io_stat "$pid" "rchar")
-        time_diff=$(($(date +%s) - start_time))
+        current_time=$(date +%s)
+        elapsed_time=$((current_time - process_start_time))
         
         # 检查数值有效性
         if [[ -z "$current_rchar" ]] || ! [[ "$current_rchar" =~ ^[0-9]+$ ]]; then
@@ -278,7 +310,8 @@ monitor_decompress() {
             continue
         fi
         
-        progress=$((current_rchar - old_rchar))
+        # 使用累计值计算进度
+        progress=$current_rchar
         
         # 确保不超过 100%
         if (( progress > total_size )); then
@@ -291,17 +324,22 @@ monitor_decompress() {
         percent=$((progress * 100 / total_size))
         bar=$(draw_progress_bar "$percent")
         
-        if (( time_diff > 0 )); then
-            local rate=$((progress / time_diff))
-            current_rate=$(format_rate "$rate")
-            if (( rate > 0 )); then
+        # 计算累计平均速率（与压缩监控保持一致）
+        if (( elapsed_time > 0 )); then
+            current_rate=$(format_rate $((current_rchar / elapsed_time)))
+        fi
+        
+        # 计算剩余时间
+        if (( elapsed_time > 0 && progress > 0 )); then
+            local avg_rate=$((progress / elapsed_time))
+            if (( avg_rate > 0 )); then
                 local remaining=$((total_size - progress))
-                rest_time=$(format_time $((remaining / rate)))
+                rest_time=$(format_time $((remaining / avg_rate)))
             fi
         fi
         
-        printf "\033[%d;0H${COLOR_BLUE}[Extract]${COLOR_RESET} %d: |%s| %3d%% %s ETA:%s    " \
-            "$lineno" "$pid" "$bar" "$percent" "$current_rate" "$rest_time"
+        printf "\033[%d;0H${COLOR_BLUE}[Extract]${COLOR_RESET} %d: |%s| %3d%% %s ETA:%s [%s]    " \
+            "$lineno" "$pid" "$bar" "$percent" "$current_rate" "$rest_time" "$(format_time $elapsed_time)"
         
         if (( progress >= total_size )); then
             break
@@ -310,9 +348,14 @@ monitor_decompress() {
         sleep "$SLEEP_INTERVAL"
     done
     
-    local elapsed=$(($(date +%s) - start_time))
-    printf "\033[%d;0H${COLOR_GREEN}[Extract]${COLOR_RESET} %d: Done %-30s (%s) %s → %s [%s]          \n" \
-        "$lineno" "$pid" "${filename##*/}" "$proname" "$source_size_fmt" "$dest_size" "$(format_time $elapsed)"
+    local total_time=$(($(date +%s) - process_start_time))
+    local avg_speed="N/A"
+    if (( total_time > 0 )); then
+        avg_speed=$(format_rate $((total_size / total_time)))
+    fi
+    
+    printf "\033[%d;0H${COLOR_GREEN}[Extract]${COLOR_RESET} %d: Done %-20s (%s) %s → %s  Speed:%s  Time:%s          \n" \
+        "$lineno" "$pid" "${filename##*/}" "$proname" "$source_size_fmt" "$dest_size" "$avg_speed" "$(format_time $total_time)"
 }
 
 # Monitor compression progress
@@ -331,18 +374,21 @@ monitor_compress() {
         output_file=$(ls -l /proc/${pid}/fd/ 2>/dev/null | grep -v "pipe" | grep -v "/dev/" | tail -1 | awk '{print $NF}') || true
     fi
     
-    local old_wchar
-    local old_rchar
-    local start_time
+    local process_start_time
     local last_wchar
-    local last_time
-    local current_rate="0 B/s"
+    local last_rchar
     
-    old_wchar=$(get_io_stat "$pid" "wchar")
-    old_rchar=$(get_io_stat "$pid" "rchar")
-    start_time=$(date +%s)
-    last_wchar=${old_wchar:-0}
-    last_time=$start_time
+    # 获取进程实际启动时间
+    process_start_time=$(get_process_start_time "$pid")
+    if [[ "$process_start_time" -eq 0 ]]; then
+        process_start_time=$(date +%s)  # 回退到当前时间
+    fi
+    
+    last_wchar=$(get_io_stat "$pid" "wchar")
+    last_rchar=$(get_io_stat "$pid" "rchar")
+    
+    local current_read_rate="0 B/s"
+    local current_write_rate="0 B/s"
     
     printf "\033[%d;0H${COLOR_YELLOW}[Compress]${COLOR_RESET} %d (%s): Starting...                    " \
         "$lineno" "$pid" "$proname"
@@ -351,57 +397,64 @@ monitor_compress() {
         local current_wchar
         local current_rchar
         local current_time
-        local time_diff
+        local elapsed_time
         
         current_wchar=$(get_io_stat "$pid" "wchar")
         current_rchar=$(get_io_stat "$pid" "rchar")
         current_time=$(date +%s)
-        time_diff=$((current_time - start_time))
+        elapsed_time=$((current_time - process_start_time))  # 使用进程实际运行时间
         
         if [[ -z "$current_wchar" ]] || [[ "$current_wchar" == "0" ]]; then
             sleep "$SLEEP_INTERVAL"
             continue
         fi
         
-        # Calculate rate
-        local interval_time=$((current_time - last_time))
-        if (( interval_time > 0 )); then
-            local interval_bytes=$((current_wchar - last_wchar))
-            if (( interval_bytes > 0 )); then
-                current_rate=$(format_rate $((interval_bytes / interval_time)))
-            fi
+        # Calculate rates - 使用累计平均速度（更稳定）
+        if (( elapsed_time > 0 )); then
+            current_read_rate=$(format_rate $((current_rchar / elapsed_time)))
+            current_write_rate=$(format_rate $((current_wchar / elapsed_time)))
         fi
         
-        # Calculate compression ratio
-        local compressed_size=$((current_wchar - old_wchar))
-        local read_size=$((current_rchar - old_rchar))
+        # 使用累计值计算压缩比（rchar/wchar 是进程启动以来的总量）
         local ratio="N/A"
-        if (( compressed_size > 0 && read_size > 0 )); then
-            ratio=$(awk -v r="$read_size" -v c="$compressed_size" 'BEGIN { printf "%.1f:1", r/c }')
+        if (( current_wchar > 0 && current_rchar > 0 )); then
+            ratio=$(awk -v r="$current_rchar" -v c="$current_wchar" 'BEGIN { printf "%.1f:1", r/c }')
         fi
         
         local read_fmt
         local compressed_fmt
-        read_fmt=$(format_size "$read_size")
-        compressed_fmt=$(format_size "$compressed_size")
+        read_fmt=$(format_size "$current_rchar")
+        compressed_fmt=$(format_size "$current_wchar")
         
-        printf "\033[%d;0H${COLOR_YELLOW}[Compress]${COLOR_RESET} %d (%s): Read:%s Written:%s Ratio:%s %s [%s]          " \
-            "$lineno" "$pid" "$proname" "$read_fmt" "$compressed_fmt" "$ratio" "$current_rate" "$(format_time $time_diff)"
+        printf "\033[%d;0H${COLOR_YELLOW}[Compress]${COLOR_RESET} %d (%s): Read:%s Written:%s Ratio:%s R:%s W:%s [%s]          " \
+            "$lineno" "$pid" "$proname" "$read_fmt" "$compressed_fmt" "$ratio" "$current_read_rate" "$current_write_rate" "$(format_time $elapsed_time)"
         
         last_wchar=$current_wchar
-        last_time=$current_time
+        last_rchar=$current_rchar
         sleep "$SLEEP_INTERVAL"
     done
     
-    # Final stats
-    local final_wchar
-    final_wchar=$((last_wchar - old_wchar))
-    local final_fmt
-    final_fmt=$(format_size "$final_wchar")
-    local total_time=$(($(date +%s) - start_time))
+    # Final stats - 使用进程实际运行时间
+    local final_rchar=${last_rchar:-0}
+    local final_wchar=${last_wchar:-0}
+    local total_time=$(($(date +%s) - process_start_time))
     
-    printf "\033[%d;0H${COLOR_GREEN}[Compress]${COLOR_RESET} %d (%s): Done  Written:%s [%s]                              \n" \
-        "$lineno" "$pid" "$proname" "$final_fmt" "$(format_time $total_time)"
+    local final_ratio="N/A"
+    if (( final_wchar > 0 && final_rchar > 0 )); then
+        final_ratio=$(awk -v r="$final_rchar" -v c="$final_wchar" 'BEGIN { printf "%.2f:1", r/c }')
+    fi
+    
+    local original_fmt=$(format_size "$final_rchar")
+    local compressed_fmt=$(format_size "$final_wchar")
+    local read_speed="N/A"
+    local write_speed="N/A"
+    if (( total_time > 0 )); then
+        read_speed=$(format_rate $((final_rchar / total_time)))
+        write_speed=$(format_rate $((final_wchar / total_time)))
+    fi
+    
+    printf "\033[%d;0H${COLOR_GREEN}[Compress]${COLOR_RESET} %d (%s): Done  %s → %s  Ratio:%s  Read:%s  Write:%s  Time:%s                    \n" \
+        "$lineno" "$pid" "$proname" "$original_fmt" "$compressed_fmt" "$final_ratio" "$read_speed" "$write_speed" "$(format_time $total_time)"
 }
 
 # Main monitor dispatcher
@@ -485,16 +538,7 @@ main() {
     
     if [[ ${#pids[@]} -eq 0 ]]; then
         echo "No compression process detected (gzip/pigz/xz/bzip2/pbzip2/zstd)"
-        echo ""
-        echo "Usage:"
-        echo "  1. Start tar command in one terminal:"
-        echo "     tar -zcvf archive.tar.gz folder/        (gzip)"
-        echo "     tar -cf - folder/ | pigz > archive.tar.gz  (pigz)"
-        echo "     tar -xzf archive.tar.gz                 (extract)"
-        echo ""
-        echo "  2. Run this script in another terminal"
-        echo ""
-        echo "Run with --help for more information"
+        echo "Start a tar command first, then run this script."
         exit 1
     fi
     
