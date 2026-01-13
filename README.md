@@ -1,4 +1,4 @@
-# tar_progress
+# tar-progress
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
@@ -37,7 +37,7 @@ Real-time progress monitor for tar compress/decompress operations on Linux.
 
 ```bash
 # Download
-curl -O https://raw.githubusercontent.com/buyudaren3/Real-time-progress-monitor-for-tar-compress-decompress-operations-on-Linux/main/tar_progress.sh
+curl -O https://raw.githubusercontent.com/buyudaren3/tar-progress/main/tar_progress.sh
 
 # Make executable
 chmod +x tar_progress.sh
