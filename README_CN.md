@@ -1,4 +1,4 @@
-# tar_progress
+# tar-progress
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
@@ -37,7 +37,7 @@ Linux 下 tar 压缩/解压操作的实时进度监控工具。
 
 ```bash
 # 下载
-curl -O https://raw.githubusercontent.com/buyudaren3/Real-time-progress-monitor-for-tar-compress-decompress-operations-on-Linux/main/tar_progress.sh
+curl -O https://raw.githubusercontent.com/buyudaren3/tar-progress/main/tar_progress.sh
 
 # 添加执行权限
 chmod +x tar_progress.sh
