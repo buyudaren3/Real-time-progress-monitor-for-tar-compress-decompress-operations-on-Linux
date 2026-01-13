@@ -39,6 +39,9 @@ Linux 下 tar 压缩/解压操作的实时进度监控工具。
 # 下载
 curl -O https://raw.githubusercontent.com/buyudaren3/tar-progress/main/tar_progress.sh
 
+# 或从 Gitee 下载（国内更快）
+curl -O https://gitee.com/buyudaren3/tar-progress/raw/main/tar_progress.sh
+
 # 添加执行权限
 chmod +x tar_progress.sh
 
@@ -114,3 +117,4 @@ MIT License
 ## 致谢
 
 原始脚本作者 [ddcw](https://github.com/ddcw)，本项目在此基础上扩展了压缩进度监控和更多格式支持。
+
